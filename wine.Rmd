@@ -1,0 +1,293 @@
+---
+title: "WINE QUALITY PREDICTION"
+author: "Auma"
+date: "`r Sys.Date()`"
+output: html_document
+---
+#Wine quality prediction
+## Loading packages
+```{r }
+
+library(tidyverse)    # metapackage of all tidyverse packages
+library(glmnet)
+library(e1071)    # for skewness  
+library(caret)    # termed as Classification and Regression Training
+library(reshape2)
+library(data.table) # provides a high-performance version of R’s data.frame
+library(caTools)    # sample.split
+library(xgboost)    # for building XGBoost model
+library(cowplot)    # for combining multiple plots 
+library(randomForest)
+#library(dplyr)      # data manipulation package i.e Select, Filter, Arrange, Mutate, and Summarize 
+#library(ggplot2)    # for ploting 
+
+
+```
+
+## Importing dataset
+
+```{r }
+library(readr)
+ train <- read_csv("train.csv")
+View(train)
+ test <- read_csv("test.csv")
+ View(test)
+ 
+```
+
+##plotting missing data
+
+```{r }
+library(DataExplorer)
+plot_missing(train)
+plot_missing(test)
+
+
+```
+
+
+```{r }
+str(train)
+str(test)
+```
+
+
+
+##Robust Scalar
+
+```{r}
+robustscalar<- function(x){
+    ( x - median(x) ) / (quantile(x, probs = .75) - quantile(x, probs = .25) )
+}
+robustscalar_train <- as.data.frame(lapply(train, robustscalar))
+head(robustscalar_train)
+
+```
+
+##Z-Score Normalization "Standardization"
+
+```{r}
+standardise_train <-  as.data.frame(scale(train[, -c(12)], center = TRUE, scale = TRUE))
+standardise_train <- as.data.frame(c(standardise_train, train[, c(12)]))
+head(standardise_train)
+
+
+```
+
+##Retrun all data except column number 12 "quality"
+
+```{r}
+x = train[,-c(12)]
+y = train[, c(12)]
+
+```
+
+##Correlation Matrix
+
+```{r}
+cor_mat = round(cor(train),2)
+cor_mat
+
+```
+
+```{r}
+shape_cormat <- melt(cor_mat) # reshape2
+head(shape_cormat, 7)
+
+```
+
+##plot heat map
+
+```{r}
+ggplot(shape_cormat, aes(Var1,Var2, fill=value))+
+  scale_fill_gradient2(low = "#FFA07A",
+                       mid = "#32CD32",
+                       high = "#800000")+
+  geom_tile(color='black')+
+  geom_text(aes(label=paste(round(value,2))),size=2, color='black')+
+  theme(axis.text.x = element_text(vjust=0.5, angle = 65))+
+  labs(title='Correlation between each variables',
+       subtitle = 'Quality is positive related to alcohol, sulphates, citric acid, fixed acidity; Quality is negative related to volatile acidity',
+       x='',y='')
+
+```
+
+```{r}
+table(train$quality)
+
+```
+
+
+```{r}
+ggplot(train, aes(quality))+geom_bar(color="#2E8B57",
+    fill="#8B008B",)+labs(title='Most are 5 and 6 quality')+theme_bw()
+
+```
+
+### bar plot
+
+```{r}
+par(mfrow = c(1, 2), mar = c(5, 4, 2, 1))
+ with(subset(train, quality == '5'), plot(alcohol, pH, main = "quality == 5", col = '#FF0000'))
+ with(subset(train, quality == '6'), plot(alcohol, pH, main = "quality == 6", col = '#FF0000'))
+
+```
+
+###Multiple histograms 
+
+```{r}
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 1))
+hist(subset(train, quality == '5')$alcohol, col = '#556B2F', xlab = 'Price', ylab = 'Count', main = 'Histogram of quality(5) Vs quality distribution')
+hist(subset(train, quality == '6')$alcohol, col = '#2F4F4F', xlab = 'Price', ylab = 'Count', main = 'Histogram of quality(6) Vs quality distribution')
+
+```
+
+#Create histogram
+
+```{r}
+
+hist(train$quality, breaks = 10, col = '#A0522D', xlab = 'quality', main  = 'Histogram of quality')
+```
+
+###scatter plot
+
+```{r}
+ggplot(
+    data=train, 
+    aes(
+        x = density,
+        y = pH,
+        col = quality
+    )
+) + geom_point()
+
+```
+
+#Quartiles
+
+##describes the value that a given percent of the values are lower than.
+
+##The value of the first quartile cuts off the first 25% of the data
+##The value of the second quartile cuts off the first 50% of the data
+##The value of the third quartile cuts off the first 75% of the data
+##The value of the fourth quartile cuts off the 100% of the data
+
+
+```{r}
+
+min(train$quality)
+quantile(train$quality) 
+max(train$quality)
+
+```
+
+```{r}
+summary(train)
+
+```
+
+# Divide into test and train date
+#train = as.data.frame(train)
+
+```{r}
+train$quality = as.factor(train$quality)
+
+set.seed(160)
+
+train_data = sample(1:nrow(train), size = 0.8*nrow(train))
+train_set = train[train_data,]
+test_set = train[-train_data,]
+nrow(train_set)
+nrow(test_set)
+
+```
+
+#Dession Trees
+
+```{r}
+library(rpart) #for trees
+model = naiveBayes(
+    quality~., 
+    data = train_set,
+    method="class"
+)
+pred = predict(model, newdata=test_set)
+confusion_matrix = confusionMatrix(test_set$quality, pred)
+confusion_matrix
+
+```
+
+#Naive Bayes
+
+```{r}
+model = naiveBayes(
+    quality~., 
+    data = train_set
+)
+pred = predict(model, newdata=test_set)
+confusion_matrix = confusionMatrix(test_set$quality, pred)
+confusion_matrix
+
+```
+
+#Grid Search
+
+```{r}
+Control = trainControl(
+    method = 'cv', 
+    number = 10,
+    search = 'grid'
+)
+
+```
+
+#Support Vector Machine
+
+```{r}
+library(kernlab)
+
+Grid = expand.grid(
+    Gamma = 10^seq(-2,2,0.01), 
+    Cost = 10^seq(-2,2,0.01)
+)
+
+svm_model = train(
+    quality~., 
+    data = train_set,
+    method = 'svmRadial',
+    tune.Grid = Grid,
+    trControl = Control 
+)
+
+```
+
+
+
+```{r}
+pred = predict(svm_model, newdata=test_set)
+confusionMatrix(test_set$quality, pred)
+
+```
+
+# Multinom
+
+```{r}
+Grid = expand.grid(
+    decay = seq(0,1, 0.02)
+)
+
+modelCVlogit = train(
+    quality~., 
+    data = train_set,
+    method = 'multinom', 
+    trControl = Control,
+    tuneGrid = Grid
+)
+
+```
+
+```{r}
+pred = predict(modelCVlogit, newdata=test_set)
+confusionMatrix(test_set$quality, pred)
+
+```
